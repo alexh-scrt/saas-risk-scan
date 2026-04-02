@@ -6,6 +6,10 @@ metadata modifiers, and the full report-building pipeline.
 
 from __future__ import annotations
 
+import datetime
+from pathlib import Path
+from typing import Optional
+
 import pytest
 
 from saas_risk_scan.models import (
@@ -85,6 +89,13 @@ class TestClamp:
         assert _clamp(150.0, lo=0.0, hi=100.0) == 100.0
         assert _clamp(-5.0, lo=0.0, hi=100.0) == 0.0
 
+    def test_clamp_fractional_value(self) -> None:
+        assert _clamp(7.5) == 7.5
+
+    def test_clamp_exactly_at_boundaries(self) -> None:
+        assert _clamp(0.0, lo=0.0, hi=10.0) == 0.0
+        assert _clamp(10.0, lo=0.0, hi=10.0) == 10.0
+
 
 # ---------------------------------------------------------------------------
 # _get_category_defaults
@@ -116,9 +127,10 @@ class TestGetCategoryDefaults:
     def test_returns_copy(self) -> None:
         """Modifying the returned dict should not affect future calls."""
         defaults1 = _get_category_defaults(ToolCategory.AUTOMATION)
+        original_val = defaults1["task_automation_ratio"]
         defaults1["task_automation_ratio"] = 0.0
         defaults2 = _get_category_defaults(ToolCategory.AUTOMATION)
-        assert defaults2["task_automation_ratio"] != 0.0
+        assert defaults2["task_automation_ratio"] == original_val
 
     def test_automation_has_high_task_ratio(self) -> None:
         defaults = _get_category_defaults(ToolCategory.AUTOMATION)
@@ -137,6 +149,21 @@ class TestGetCategoryDefaults:
         for category in ToolCategory:
             defaults = _get_category_defaults(category)
             assert len(defaults) == 5
+
+    def test_hr_has_high_data_sensitivity(self) -> None:
+        defaults = _get_category_defaults(ToolCategory.HR)
+        assert defaults["data_sensitivity"] >= 7.0
+
+    def test_automation_has_low_data_sensitivity(self) -> None:
+        """Automation tools typically have low data sensitivity."""
+        defaults = _get_category_defaults(ToolCategory.AUTOMATION)
+        assert defaults["data_sensitivity"] <= 5.0
+
+    def test_different_categories_have_different_defaults(self) -> None:
+        automation_defaults = _get_category_defaults(ToolCategory.AUTOMATION)
+        hr_defaults = _get_category_defaults(ToolCategory.HR)
+        # Automation should have higher task automation ratio than HR
+        assert automation_defaults["task_automation_ratio"] > hr_defaults["task_automation_ratio"]
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +223,27 @@ class TestApplyTeamSizeModifier:
         dims = self._base_dims()
         original = dict(dims)
         _apply_team_size_modifier(dims, 50)
-        for key in ("task_automation_ratio", "api_openness", "workflow_complexity", "data_sensitivity"):
+        for key in (
+            "task_automation_ratio",
+            "api_openness",
+            "workflow_complexity",
+            "data_sensitivity",
+        ):
             assert dims[key] == original[key]
+
+    def test_returns_same_dict(self) -> None:
+        """Function modifies in-place and returns the same dict object."""
+        dims = self._base_dims()
+        result = _apply_team_size_modifier(dims, 50)
+        assert result is dims
+
+    def test_medium_team_has_moderate_increase(self) -> None:
+        dims = self._base_dims()
+        result = _apply_team_size_modifier(dims, 50)
+        # At 50 users, should have some inertia increase but less than 100+
+        large_dims = self._base_dims()
+        _apply_team_size_modifier(large_dims, 200)
+        assert result["incumbent_inertia"] <= large_dims["incumbent_inertia"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +296,25 @@ class TestApplyCostModifier:
         dims["incumbent_inertia"] = 9.8
         result = _apply_cost_modifier(dims, 10000.0)
         assert result["incumbent_inertia"] <= 10.0
+
+    def test_returns_same_dict(self) -> None:
+        dims = self._base_dims()
+        result = _apply_cost_modifier(dims, 1000.0)
+        assert result is dims
+
+    def test_moderate_cost_moderate_increase(self) -> None:
+        dims_low = self._base_dims()
+        dims_high = self._base_dims()
+        _apply_cost_modifier(dims_low, 100.0)
+        _apply_cost_modifier(dims_high, 5000.0)
+        assert dims_high["incumbent_inertia"] >= dims_low["incumbent_inertia"]
+
+    def test_medium_cost_threshold(self) -> None:
+        """Cost at 1000 USD threshold should increase inertia modestly."""
+        dims = self._base_dims()
+        result = _apply_cost_modifier(dims, 1000.0)
+        # At 1000, delta = +0.5
+        assert result["incumbent_inertia"] > 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +413,29 @@ class TestApplyNotesModifiers:
         _apply_notes_modifiers(dims, notes)
         assert dims["incumbent_inertia"] >= 0.0
 
+    def test_returns_same_dict(self) -> None:
+        dims = self._base_dims()
+        result = _apply_notes_modifiers(dims, "API integration with webhook triggers")
+        assert result is dims
+
+    def test_webhook_keyword_raises_api_openness(self) -> None:
+        dims = self._base_dims()
+        original_api = dims["api_openness"]
+        _apply_notes_modifiers(dims, "Supports webhook-based integrations")
+        assert dims["api_openness"] > original_api
+
+    def test_enterprise_keyword_raises_inertia(self) -> None:
+        dims = self._base_dims()
+        original_in = dims["incumbent_inertia"]
+        _apply_notes_modifiers(dims, "Enterprise contract signed for 3 years")
+        assert dims["incumbent_inertia"] > original_in
+
+    def test_pci_keyword_raises_data_sensitivity(self) -> None:
+        dims = self._base_dims()
+        original_ds = dims["data_sensitivity"]
+        _apply_notes_modifiers(dims, "PCI-DSS compliant payment processing")
+        assert dims["data_sensitivity"] > original_ds
+
 
 # ---------------------------------------------------------------------------
 # _build_dimensions_from_kb
@@ -404,6 +492,34 @@ class TestBuildDimensionsFromKb:
         for key, val in dims.items():
             assert 0.0 <= val <= 10.0, f"Dimension '{key}' out of range: {val}"
 
+    def test_notes_modifier_applied(self) -> None:
+        entry = lookup("Notion")
+        assert entry is not None
+        tool_no_notes = make_tool("Notion", ToolCategory.KNOWLEDGE_MANAGEMENT)
+        tool_with_notes = make_tool(
+            "Notion",
+            ToolCategory.KNOWLEDGE_MANAGEMENT,
+            notes="Heavily customized with API integrations and complex workflows",
+        )
+        dims_no = _build_dimensions_from_kb(entry, tool_no_notes)
+        dims_notes = _build_dimensions_from_kb(entry, tool_with_notes)
+        # Notes about API and complexity should increase some dimensions
+        changed = any(
+            dims_notes[k] != dims_no[k]
+            for k in dims_no
+        )
+        assert changed, "Notes should have modified at least one dimension"
+
+    def test_preserves_kb_task_automation_ratio_direction(self) -> None:
+        """KB entries with high task_automation_ratio should keep it high."""
+        entry = lookup("Zapier")
+        assert entry is not None
+        assert entry.task_automation_ratio >= 8.0
+        tool = make_tool("Zapier", ToolCategory.AUTOMATION)
+        dims = _build_dimensions_from_kb(entry, tool)
+        # Should still be high (within 2.0 units of baseline)
+        assert dims["task_automation_ratio"] >= entry.task_automation_ratio - 2.0
+
 
 # ---------------------------------------------------------------------------
 # _build_dimensions_from_defaults
@@ -426,8 +542,7 @@ class TestBuildDimensionsFromDefaults:
         tool = make_tool("UnknownTool", ToolCategory.AUTOMATION)
         dims = _build_dimensions_from_defaults(tool)
         category_defaults = _get_category_defaults(ToolCategory.AUTOMATION)
-        # Without modifiers, should match category defaults
-        # (small differences possible from rounding)
+        # Without modifiers, should match category defaults closely
         assert abs(dims["task_automation_ratio"] - category_defaults["task_automation_ratio"]) <= 2.0
 
     def test_all_scores_in_range(self) -> None:
@@ -453,6 +568,23 @@ class TestBuildDimensionsFromDefaults:
         assert dims_meta["incumbent_inertia"] >= dims_plain["incumbent_inertia"]
         assert dims_meta["data_sensitivity"] >= dims_plain["data_sensitivity"]
 
+    def test_no_metadata_matches_category_defaults(self) -> None:
+        """A tool with no metadata should return category defaults."""
+        for category in ToolCategory:
+            tool = make_tool("PlainTool", category)
+            dims = _build_dimensions_from_defaults(tool)
+            defaults = _get_category_defaults(category)
+            for key in defaults:
+                assert dims[key] == defaults[key], (
+                    f"Without metadata, '{key}' should match category default "
+                    f"for category '{category}'"
+                )
+
+    def test_finance_category_has_high_data_sensitivity(self) -> None:
+        tool = make_tool("UnknownFinanceTool", ToolCategory.FINANCE)
+        dims = _build_dimensions_from_defaults(tool)
+        assert dims["data_sensitivity"] >= 8.0
+
 
 # ---------------------------------------------------------------------------
 # _get_default_alternatives
@@ -477,6 +609,22 @@ class TestGetDefaultAlternatives:
         alts1.clear()
         alts2 = _get_default_alternatives(ToolCategory.AUTOMATION)
         assert len(alts2) > 0
+
+    def test_alternatives_are_strings(self) -> None:
+        for category in ToolCategory:
+            alts = _get_default_alternatives(category)
+            for alt in alts:
+                assert isinstance(alt, str)
+                assert len(alt) > 0
+
+    def test_automation_has_n8n(self) -> None:
+        alts = _get_default_alternatives(ToolCategory.AUTOMATION)
+        alts_lower = [a.lower() for a in alts]
+        assert any("n8n" in a for a in alts_lower)
+
+    def test_crm_has_alternatives(self) -> None:
+        alts = _get_default_alternatives(ToolCategory.CRM)
+        assert len(alts) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +747,56 @@ class TestScoreTool:
             result = score_tool(tool)
             assert 0.0 <= result.displacement_score <= 100.0
 
+    def test_risk_level_consistent_with_score(self) -> None:
+        """Risk level should match score bands for all known tools."""
+        from saas_risk_scan.knowledge_base import all_entries
+        from saas_risk_scan.models import score_to_risk_level
+        for entry in all_entries():
+            tool = make_tool(entry.name, entry.category)
+            result = score_tool(tool)
+            expected_level = score_to_risk_level(result.displacement_score)
+            assert result.risk_level == expected_level, (
+                f"Tool '{entry.name}': risk_level {result.risk_level} does not match "
+                f"score {result.displacement_score} → expected {expected_level}"
+            )
+
+    def test_timeline_consistent_with_score(self) -> None:
+        """Timeline should match score bands for all known tools."""
+        from saas_risk_scan.knowledge_base import all_entries
+        from saas_risk_scan.models import score_to_timeline
+        for entry in all_entries():
+            tool = make_tool(entry.name, entry.category)
+            result = score_tool(tool)
+            expected_timeline = score_to_timeline(result.displacement_score)
+            assert result.timeline == expected_timeline
+
+    def test_unknown_tool_rationale_mentions_tool_name(self) -> None:
+        """Rationale for unknown tools should reference the tool name or category."""
+        tool = make_tool("MyCustomSaasTool", ToolCategory.CRM)
+        result = score_tool(tool)
+        assert (
+            "MyCustomSaasTool" in result.score.rationale
+            or "crm" in result.score.rationale.lower()
+        )
+
+    def test_result_has_correct_tool_category(self) -> None:
+        """The tool's category should be preserved in the result."""
+        tool = make_tool("SomeTool", ToolCategory.MARKETING)
+        result = score_tool(tool)
+        assert result.tool.category == ToolCategory.MARKETING
+
+    def test_salesforce_is_medium_or_high_risk(self) -> None:
+        """Salesforce should be medium or high risk due to high inertia/complexity."""
+        tool = make_tool("Salesforce", ToolCategory.CRM)
+        result = score_tool(tool)
+        assert result.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+
+    def test_calendly_is_high_or_critical_risk(self) -> None:
+        """Calendly has very high automation ratio and low inertia."""
+        tool = make_tool("Calendly", ToolCategory.AUTOMATION)
+        result = score_tool(tool)
+        assert result.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+
 
 # ---------------------------------------------------------------------------
 # score_stack
@@ -667,6 +865,36 @@ class TestScoreStack:
         results = score_stack(stack)
         for r in results:
             assert 0.0 <= r.displacement_score <= 100.0
+
+    def test_use_knowledge_base_false_all_default(self) -> None:
+        """With use_knowledge_base=False, all tools use defaults."""
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),
+            make_tool("Salesforce", ToolCategory.CRM),
+        ])
+        results = score_stack(stack, use_knowledge_base=False)
+        for r in results:
+            assert r.source == "default"
+
+    def test_no_ranks_set(self) -> None:
+        """score_stack does not set ranks; that's done in build_report."""
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),
+            make_tool("Notion", ToolCategory.KNOWLEDGE_MANAGEMENT),
+        ])
+        results = score_stack(stack)
+        for r in results:
+            assert r.rank is None
+
+    def test_large_stack_scores_without_error(self) -> None:
+        """Scoring a large stack should complete without errors."""
+        tools = [
+            make_tool(f"Tool{i}", ToolCategory.OTHER)
+            for i in range(20)
+        ]
+        stack = SaasStack(tools=tools)
+        results = score_stack(stack)
+        assert len(results) == 20
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +1009,65 @@ class TestBuildReport:
         assert report.total_tools == 1
         assert report.results[0].rank == 1
 
+    def test_avg_score_is_correct(self) -> None:
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),
+            make_tool("Workday", ToolCategory.HR),
+        ])
+        report = build_report(stack, generated_at="2024-01-01T00:00:00")
+        scores = [r.displacement_score for r in report.results]
+        expected = round(sum(scores) / len(scores), 1)
+        assert report.summary_stats["avg_displacement_score"] == expected
+
+    def test_risk_level_counts_correct(self) -> None:
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),
+            make_tool("Salesforce", ToolCategory.CRM),
+            make_tool("Workday", ToolCategory.HR),
+        ])
+        report = build_report(stack, generated_at="2024-01-01T00:00:00")
+        actual_counts: dict[str, int] = {}
+        for r in report.results:
+            level = r.risk_level.value
+            actual_counts[level] = actual_counts.get(level, 0) + 1
+        assert report.summary_stats["risk_level_counts"] == actual_counts
+
+    def test_all_results_have_non_none_rank(self) -> None:
+        stack = self._make_stack()
+        report = build_report(stack, generated_at="2024-01-01T00:00:00")
+        for r in report.results:
+            assert r.rank is not None
+
+    def test_ranks_are_unique(self) -> None:
+        stack = self._make_stack()
+        report = build_report(stack, generated_at="2024-01-01T00:00:00")
+        ranks = [r.rank for r in report.results]
+        assert len(ranks) == len(set(ranks))
+
+    def test_no_cost_data_summary_is_none(self) -> None:
+        """If no tools have cost data, total_monthly_cost_usd should be None."""
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),  # no cost
+            make_tool("Notion", ToolCategory.KNOWLEDGE_MANAGEMENT),  # no cost
+        ])
+        report = build_report(stack, generated_at="2024-01-01T00:00:00")
+        assert report.summary_stats["total_monthly_cost_usd"] is None
+
+    def test_pre_scored_case_insensitive_dedup(self) -> None:
+        """Pre-scored tool name matching should be case-insensitive."""
+        stack = SaasStack(tools=[
+            make_tool("zapier", ToolCategory.AUTOMATION),
+        ])
+        # Pre-score with different case
+        zapier_result = score_tool(make_tool("Zapier", ToolCategory.AUTOMATION))
+        report = build_report(
+            stack,
+            generated_at="2024-01-01T00:00:00",
+            pre_scored_results=[zapier_result],
+        )
+        # Should not double-score
+        assert report.total_tools == 1
+
 
 # ---------------------------------------------------------------------------
 # get_dimension_weights
@@ -813,6 +1100,26 @@ class TestGetDimensionWeights:
         weights = get_dimension_weights()
         for name, w in weights.items():
             assert w > 0.0, f"Weight for '{name}' should be positive"
+
+    def test_task_automation_ratio_weight_is_30(self) -> None:
+        weights = get_dimension_weights()
+        assert weights["task_automation_ratio"] == 30.0
+
+    def test_api_openness_weight_is_20(self) -> None:
+        weights = get_dimension_weights()
+        assert weights["api_openness"] == 20.0
+
+    def test_data_sensitivity_weight_is_20(self) -> None:
+        weights = get_dimension_weights()
+        assert weights["data_sensitivity"] == 20.0
+
+    def test_workflow_complexity_weight_is_15(self) -> None:
+        weights = get_dimension_weights()
+        assert weights["workflow_complexity"] == 15.0
+
+    def test_incumbent_inertia_weight_is_15(self) -> None:
+        weights = get_dimension_weights()
+        assert weights["incumbent_inertia"] == 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -875,6 +1182,30 @@ class TestScoreDimensionsOnly:
         assert result["data_sensitivity"] == 4.0
         assert result["incumbent_inertia"] == 2.0
 
+    def test_midpoint_risk_level_is_high(self) -> None:
+        result = score_dimensions_only(5.0, 5.0, 5.0, 5.0, 5.0)
+        assert result["risk_level"] == "high"  # 50.0 → HIGH band
+        assert result["timeline"] == "mid"
+
+    def test_score_75_is_critical(self) -> None:
+        # Construct dims that produce exactly 75
+        # raw = task*3 + api*2 + (10-wf)*1.5 + (10-ds)*2 + (10-i)*1.5 = 75
+        # With wf=ds=i=5: = task*3 + api*2 + 25 = 75 → task*3 + api*2 = 50
+        # Set api=5 → task*3 = 40 → task ≈ 13.33 (too high)
+        # Set api=2.5 → task*3 = 45 → task=15 (too high)
+        # Try task=10, api=10: = 30+20+7.5+10+7.5=75 with wf=ds=i=5
+        result = score_dimensions_only(10.0, 10.0, 5.0, 5.0, 5.0)
+        assert result["displacement_score"] == 75.0
+        assert result["risk_level"] == "critical"
+
+    def test_displacement_score_is_float(self) -> None:
+        result = score_dimensions_only(5.0, 5.0, 5.0, 5.0, 5.0)
+        assert isinstance(result["displacement_score"], float)
+
+    def test_near_timeline_display_contains_12(self) -> None:
+        result = score_dimensions_only(10.0, 10.0, 0.0, 0.0, 0.0)
+        assert "12" in result["timeline_display"]
+
 
 # ---------------------------------------------------------------------------
 # Integration: end-to-end stack scoring
@@ -886,14 +1217,12 @@ class TestIntegrationStackScoring:
 
     def test_sample_stack_scores_without_error(self) -> None:
         """Scoring the example SaaS stack should complete without errors."""
-        from pathlib import Path
-        from saas_risk_scan.loader import load_file
-
         sample = Path("examples/sample_stack.yaml")
         if not sample.exists():
             pytest.skip("examples/sample_stack.yaml not found")
 
-        import datetime
+        from saas_risk_scan.loader import load_file
+
         stack = load_file(sample)
         report = build_report(
             stack,
@@ -913,7 +1242,6 @@ class TestIntegrationStackScoring:
             make_tool("Workday", ToolCategory.HR),
             make_tool("GitHub", ToolCategory.DEVTOOLS),
         ])
-        import datetime
         report = build_report(stack, generated_at=datetime.datetime.now().isoformat())
         ranks = [r.rank for r in report.results]
         assert len(ranks) == len(set(ranks)), "Ranks should be unique"
@@ -924,7 +1252,6 @@ class TestIntegrationStackScoring:
             make_tool("Zapier", ToolCategory.AUTOMATION),
             make_tool("Workday", ToolCategory.HR),
         ])
-        import datetime
         report = build_report(stack, generated_at=datetime.datetime.now().isoformat())
         scores = [r.displacement_score for r in report.results]
         expected_avg = round(sum(scores) / len(scores), 1)
@@ -937,10 +1264,88 @@ class TestIntegrationStackScoring:
             make_tool("Salesforce", ToolCategory.CRM),
             make_tool("Workday", ToolCategory.HR),
         ])
-        import datetime
         report = build_report(stack, generated_at=datetime.datetime.now().isoformat())
         actual_counts: dict[str, int] = {}
         for r in report.results:
             level = r.risk_level.value
             actual_counts[level] = actual_counts.get(level, 0) + 1
         assert report.summary_stats["risk_level_counts"] == actual_counts
+
+    def test_automation_tools_generally_higher_risk_than_hr(self) -> None:
+        """On average, automation category tools should score higher than HR tools."""
+        from saas_risk_scan.knowledge_base import entries_by_category
+
+        auto_entries = entries_by_category(ToolCategory.AUTOMATION)
+        hr_entries = entries_by_category(ToolCategory.HR)
+
+        if not auto_entries or not hr_entries:
+            pytest.skip("Not enough entries in KB for this test")
+
+        auto_results = [
+            score_tool(make_tool(e.name, e.category))
+            for e in auto_entries
+        ]
+        hr_results = [
+            score_tool(make_tool(e.name, e.category))
+            for e in hr_entries
+        ]
+
+        avg_auto = sum(r.displacement_score for r in auto_results) / len(auto_results)
+        avg_hr = sum(r.displacement_score for r in hr_results) / len(hr_results)
+
+        assert avg_auto > avg_hr, (
+            f"Expected automation avg ({avg_auto:.1f}) > HR avg ({avg_hr:.1f})"
+        )
+
+    def test_all_analysis_results_have_valid_data(self) -> None:
+        """All results in a report should have valid scores and metadata."""
+        from saas_risk_scan.knowledge_base import all_entries
+
+        # Score a subset of KB tools
+        entries = all_entries()[:10]
+        tools = [make_tool(e.name, e.category) for e in entries]
+        stack = SaasStack(tools=tools)
+        report = build_report(
+            stack,
+            generated_at=datetime.datetime.now().isoformat(),
+        )
+
+        for r in report.results:
+            assert r.rank is not None and r.rank >= 1
+            assert 0.0 <= r.displacement_score <= 100.0
+            assert r.risk_level in list(RiskLevel)
+            assert r.timeline in list(ReplacementTimeline)
+            assert isinstance(r.score.alternatives, list)
+            assert r.score.rationale is not None
+            assert len(r.score.rationale) > 0
+
+    def test_report_to_dict_is_serializable(self) -> None:
+        """The report's to_dict() output should be JSON-serializable."""
+        import json
+
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION, monthly_cost_usd=599.0),
+            make_tool("Notion", ToolCategory.KNOWLEDGE_MANAGEMENT, monthly_cost_usd=320.0),
+        ])
+        report = build_report(
+            stack,
+            generated_at=datetime.datetime.now().isoformat(),
+        )
+        d = report.to_dict()
+        # Should not raise
+        json_str = json.dumps(d, default=str)
+        assert len(json_str) > 0
+
+    def test_scoring_is_deterministic(self) -> None:
+        """Scoring the same stack twice should produce identical results."""
+        stack = SaasStack(tools=[
+            make_tool("Zapier", ToolCategory.AUTOMATION),
+            make_tool("Salesforce", ToolCategory.CRM),
+        ])
+        ts = "2024-01-01T00:00:00"
+        report1 = build_report(stack, generated_at=ts)
+        report2 = build_report(stack, generated_at=ts)
+
+        scores1 = sorted(r.displacement_score for r in report1.results)
+        scores2 = sorted(r.displacement_score for r in report2.results)
+        assert scores1 == scores2
