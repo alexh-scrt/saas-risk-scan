@@ -1,0 +1,136 @@
+{# Jinja2 template for the SaaS Displacement Risk Markdown report. #}
+{# Variables provided by Reporter._build_template_context():       #}
+{#   report, results, generated_at, total_tools, shown_tools,      #}
+{#   avg_score, total_monthly_cost, enrichment_enabled,            #}
+{#   tools_enriched_by_llm, risk_counts,                           #}
+{#   RiskLevel, ReplacementTimeline, risk_emoji, format_cost,      #}
+{#   score_bar                                                      #}
+# SaaS Displacement Risk Report
+
+Generated: {{ generated_at }}  ·  Tools analyzed: {{ total_tools }}{% if shown_tools != total_tools %}  ·  Showing: {{ shown_tools }}{% endif %}  ·  Avg displacement score: {{ avg_score | round1 }}/100
+{% if total_monthly_cost is not none %}
+**Total monthly SaaS spend:** ${{ "{:,.0f}".format(total_monthly_cost) }}/mo
+{% endif %}
+{% if enrichment_enabled %}
+> ✨ **LLM enrichment** was active for this scan ({{ tools_enriched_by_llm }} tool(s) scored via OpenAI).
+{% endif %}
+
+---
+
+## Executive Summary
+
+{% set critical = risk_counts.critical %}
+{% set high = risk_counts.high %}
+{% set medium = risk_counts.medium %}
+{% set low = risk_counts.low %}
+{% if critical > 0 %}
+🔴 **{{ critical }}** tool{{ 's' if critical != 1 else '' }} at **Critical** risk — AI displacement likely **within 12 months**.
+{% endif %}
+{% if high > 0 %}
+🟠 **{{ high }}** tool{{ 's' if high != 1 else '' }} at **High** risk — displacement expected within **12–24 months**.
+{% endif %}
+{% if medium > 0 %}
+🟡 **{{ medium }}** tool{{ 's' if medium != 1 else '' }} at **Medium** risk — displacement possible over **24–36 months**.
+{% endif %}
+{% if low > 0 %}
+🟢 **{{ low }}** tool{{ 's' if low != 1 else '' }} at **Low** risk — displacement **unlikely** within 36 months.
+{% endif %}
+
+---
+
+## Risk Rankings
+
+| # | Tool | Category | Score | Risk | Timeline | Cost/mo | Top Alternatives |
+|--:|------|----------|------:|------|----------|---------:|------------------|
+{% for r in results %}
+| {{ r.rank }} | **{{ r.tool_name }}** | `{{ r.tool.category.value }}` | **{{ r.score.displacement_score | round1 }}** | {{ risk_emoji(r.risk_level) }} {{ r.risk_level.label }} | {{ r.timeline.display }} | {{ format_cost(r.tool.monthly_cost_usd) }} | {{ r.score.alternatives_display(3) }} |
+{% endfor %}
+
+---
+
+## Detailed Analysis
+
+{% for r in results %}
+### {{ r.rank }}. {{ r.tool_name }}
+
+```
+{{ score_bar(r.score.displacement_score) }} {{ r.score.displacement_score | round1 }}/100
+```
+
+| Attribute | Value |
+|-----------|-------|
+| **Category** | {{ r.tool.category.value }} |
+| **Risk Level** | {{ risk_emoji(r.risk_level) }} {{ r.risk_level.label }} |
+| **Timeline** | {{ r.timeline.display }} |
+| **Monthly Cost** | {{ format_cost(r.tool.monthly_cost_usd) }} |
+{% if r.tool.team_size is not none %}
+| **Team Size** | {{ r.tool.team_size }} users |
+{% endif %}
+| **Score Source** | {% if r.source == 'knowledge_base' %}Knowledge Base{% elif r.source == 'llm' %}LLM Enrichment ✨{% else %}Heuristic Default{% endif %} |
+
+#### Dimension Scores
+
+| Dimension | Score | Weight | Contribution to Risk |
+|-----------|------:|-------:|----------------------|
+| Task Automation Ratio | {{ r.score.task_automation_ratio }}/10 | 30% | Higher → more displaceable |
+| API Openness | {{ r.score.api_openness }}/10 | 20% | Higher → more displaceable |
+| Workflow Complexity | {{ r.score.workflow_complexity }}/10 | 15% | Lower → more displaceable |
+| Data Sensitivity | {{ r.score.data_sensitivity }}/10 | 20% | Higher → less displaceable |
+| Incumbent Inertia | {{ r.score.incumbent_inertia }}/10 | 15% | Higher → less displaceable |
+
+{% if r.score.rationale %}
+**Rationale:**
+
+> {{ r.score.rationale }}
+
+{% endif %}
+{% if r.score.alternatives %}
+**Agentic & Open-Source Alternatives:**
+
+{% for alt in r.score.alternatives %}
+- {{ alt }}
+{% endfor %}
+{% endif %}
+{% if r.tool.notes %}
+**Context Notes:**
+
+> {{ r.tool.notes }}
+
+{% endif %}
+---
+{% endfor %}
+
+## Scoring Methodology
+
+Each tool is scored on five dimensions (0–10 each), then combined into a weighted **Displacement Score** (0–100):
+
+| Dimension | Weight | Direction | Description |
+|-----------|--------|-----------|-------------|
+| Task Automation Ratio | **30%** | ↑ risk | How much core value is pure task execution vs. human judgment |
+| API Openness | **20%** | ↑ risk | Quality and completeness of public APIs / webhook support |
+| Workflow Complexity | **15%** | ↓ risk | Depth of embedding in multi-step human workflows |
+| Data Sensitivity | **20%** | ↓ risk | Risk and friction of data migration and lock-in |
+| Incumbent Inertia | **15%** | ↓ risk | Organizational switching cost: contracts, training, politics |
+
+### Displacement Score Formula
+
+```
+score = (task_automation_ratio × 3.0)
+      + (api_openness × 2.0)
+      + (10 − workflow_complexity) × 1.5
+      + (10 − data_sensitivity) × 2.0
+      + (10 − incumbent_inertia) × 1.5
+```
+
+### Score → Risk Bands
+
+| Score | Risk Level | Estimated Timeline |
+|------:|------------|--------------------|
+| 75–100 | 🔴 Critical | Near-term: < 12 months |
+| 50–74 | 🟠 High | Mid-term: 12–24 months |
+| 25–49 | 🟡 Medium | Long-term: 24–36 months |
+| 0–24 | 🟢 Low | Unlikely: 36+ months |
+
+---
+
+*Generated by [saas-risk-scan](https://github.com/example/saas-risk-scan) · {{ generated_at }}*
