@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "saas-risk-scan"
+version = "0.1.0"
+description = "SaaS Replacement Risk Analyzer - audit your SaaS stack for AI displacement risk"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "SaaS Risk Scan Contributors" }
+]
+keywords = ["saas", "risk", "ai", "cli", "audit", "displacement"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "openai>=1.30",
+]
+
+[project.scripts]
+saas-risk-scan = "saas_risk_scan.main:app"
+
+[project.urls]
+Homepage = "https://github.com/example/saas-risk-scan"
+Repository = "https://github.com/example/saas-risk-scan"
+Issues = "https://github.com/example/saas-risk-scan/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["saas_risk_scan"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true

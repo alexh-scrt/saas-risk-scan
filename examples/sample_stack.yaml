@@ -1,0 +1,184 @@
+# Sample SaaS Stack for saas-risk-scan demonstration
+# Run: saas-risk-scan scan examples/sample_stack.yaml
+#
+# This file represents a realistic mid-size B2B SaaS company's tool stack.
+# Fields:
+#   name             (required) - SaaS tool name
+#   category         (required) - tool category
+#   monthly_cost_usd (optional) - monthly spend in USD
+#   team_size        (optional) - number of users/seats
+#   notes            (optional) - free-text context for LLM enrichment
+
+tools:
+  # --- Automation & Integration ---
+  - name: Zapier
+    category: automation
+    monthly_cost_usd: 599
+    team_size: 12
+    notes: >-
+      Runs 300+ zaps connecting Salesforce, Slack, HubSpot, and internal
+      tools. Primarily handles lead routing, notification triggers, and
+      data sync between systems.
+
+  - name: Make
+    category: automation
+    monthly_cost_usd: 99
+    team_size: 5
+    notes: >-
+      Used by the data team for ETL-style workflows and report generation
+      pipelines. Some complex multi-branch scenarios.
+
+  # --- CRM & Sales ---
+  - name: Salesforce
+    category: crm
+    monthly_cost_usd: 3200
+    team_size: 35
+    notes: >-
+      Core CRM with heavily customized objects, flows, and AppExchange
+      integrations. Holds 7 years of customer data. Sales team relies on
+      it daily for pipeline management and forecasting.
+
+  - name: HubSpot
+    category: crm
+    monthly_cost_usd: 800
+    team_size: 15
+    notes: >-
+      Marketing hub used for email campaigns, landing pages, and lead
+      scoring. Integrated with Salesforce via bidirectional sync.
+
+  # --- Customer Support ---
+  - name: Intercom
+    category: customer_support
+    monthly_cost_usd: 1200
+    team_size: 10
+    notes: >-
+      In-app chat, onboarding flows, and support ticketing. Used by
+      customer success team. Has a custom bot built on their Fin AI.
+
+  - name: Zendesk
+    category: customer_support
+    monthly_cost_usd: 950
+    team_size: 8
+    notes: >-
+      Primary ticket queue for technical support. Macros and triggers
+      automate ~40% of tier-1 responses.
+
+  # --- Knowledge Management & Collaboration ---
+  - name: Notion
+    category: knowledge_management
+    monthly_cost_usd: 320
+    team_size: 80
+    notes: >-
+      Company wiki, meeting notes, project specs, and OKR tracking.
+      Deeply embedded in eng and product workflows.
+
+  - name: Confluence
+    category: knowledge_management
+    monthly_cost_usd: 480
+    team_size: 45
+    notes: >-
+      Legacy documentation system still used by engineering for ADRs
+      and runbooks. Migration to Notion partially underway.
+
+  # --- Project Management ---
+  - name: Jira
+    category: project_management
+    monthly_cost_usd: 560
+    team_size: 55
+    notes: >-
+      Engineering sprint tracking, bug queues, and release management.
+      Heavily customized with 20+ workflow schemes.
+
+  - name: Linear
+    category: project_management
+    monthly_cost_usd: 200
+    team_size: 20
+    notes: >-
+      Used by product and design teams. Clean API, GitHub integration,
+      cycles-based planning.
+
+  # --- Communication ---
+  - name: Slack
+    category: communication
+    monthly_cost_usd: 1440
+    team_size: 120
+    notes: >-
+      Primary internal communication. 50+ active channels, many automated
+      notification integrations via webhooks.
+
+  # --- HR & People Ops ---
+  - name: Workday
+    category: hr
+    monthly_cost_usd: 2100
+    team_size: 120
+    notes: >-
+      HRIS, payroll, time tracking, and benefits administration.
+      Compliance-heavy; deep integration with finance systems.
+
+  - name: Greenhouse
+    category: hr
+    monthly_cost_usd: 650
+    team_size: 8
+    notes: >-
+      Applicant tracking system. Integrated with LinkedIn and background
+      check vendors. AI screening features being evaluated.
+
+  # --- Finance ---
+  - name: QuickBooks
+    category: finance
+    monthly_cost_usd: 200
+    team_size: 5
+    notes: >-
+      Accounting, invoicing, and expense tracking. Accountant has full
+      access; syncs with Stripe and bank feeds.
+
+  - name: Stripe
+    category: finance
+    monthly_cost_usd: 0
+    team_size: 10
+    notes: >-
+      Payment processing (usage-based billing via API). Not a traditional
+      SaaS tool but included for completeness.
+
+  # --- Data & Analytics ---
+  - name: Looker
+    category: data_analytics
+    monthly_cost_usd: 3000
+    team_size: 25
+    notes: >-
+      BI platform with LookML models. Business teams use it for dashboards;
+      data team maintains 100+ explores.
+
+  - name: Segment
+    category: data_analytics
+    monthly_cost_usd: 1200
+    team_size: 10
+    notes: >-
+      Customer data platform handling event routing from web and mobile
+      apps to 15+ destinations.
+
+  # --- Marketing ---
+  - name: Marketo
+    category: marketing
+    monthly_cost_usd: 2500
+    team_size: 6
+    notes: >-
+      Marketing automation for nurture programs, webinar follow-ups,
+      and scoring. Tightly integrated with Salesforce.
+
+  # --- DevTools ---
+  - name: GitHub
+    category: devtools
+    monthly_cost_usd: 420
+    team_size: 55
+    notes: >-
+      Source control, Actions CI/CD, Projects, and code review workflows.
+      Core developer tool, high switching cost.
+
+  - name: Datadog
+    category: devtools
+    monthly_cost_usd: 1800
+    team_size: 55
+    notes: >-
+      Application performance monitoring, logging, and alerting.
+      Deep integration with all production services.
